@@ -86,6 +86,9 @@ class InvoiceApp:
         self.listbox = tk.Listbox(root, width=80, height=10)
         self.listbox.pack(padx=10)
 
+        # Remove button
+        self.remove_btn = tk.Button(root, text="remove selected file", command=self.remove_selected)
+
         # Process button
         self.process_btn = tk.Button(root, text="process and save", command=self.process_files)
         self.process_btn.pack(pady=10)
