@@ -103,6 +103,17 @@ class InvoiceApp:
         else:
             messagebox.showwarning("no files selected", "please select pdf files first!!!!")        
 
+    def remove_selected(self):
+        selected_index = self.listbox.curselection()
+        if not selected_index:
+            messagebox.showwarning("no selection", "please select a file to remove!")
+            return
+        index = selected_index[0]
+        removed_file = self.listbox.get(index)
+        self.listbox.delete(index)
+        self.file_list.remove(removed_file)
+
+
 
     def process_files(self):
         if not self.file_list:
