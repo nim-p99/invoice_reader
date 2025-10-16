@@ -36,7 +36,46 @@ def detect_supplier(text):
         return "Unknown"
 
 #------------------ LINE ITEM EXTRACTION ------------
-def extract_line_items(text):
+def extract_line_items(text, supplier):
+    if supplier == "AAH":
+        return extract_aah_line_items(text)
+    elif supplier == "Colorama":
+        return extract_colorama_line_items(text)
+    elif supplier == "Alliance":
+        return extract_alliance_line_items(text)
+    elif supplier == "Lexon":
+        return extract_lexon_line_items(text)
+    else:
+        return []   
+
+
+
+#---------------- INVOICE HEADER EXTRACTION -------
+def extract_invoice_fields(text, supplier):
+    if supplier == "AAH":
+        return extract_aah_fields(text)
+    elif supplier == "Colorama":
+        return extract_colorama_fields(text)
+    elif supplier == "Alliance":
+        return extract_alliance_fields(text)
+    elif supplier == "Lexon":
+        return extract_lexon_fields(text)
+    else:
+        return {"invoice_no": None, "date": None, "total": None}
+
+def extract_colorama_fields(text):
+    """Extract invoice number, date and total using regex patterns"""
+    invoice_no = re.search(r"Invoice No : (\S+)", text, re.IGNORECASE)
+    date = re.search(r"Order Date : (\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", text, re.IGNORECASE)
+    total = re.search(r"Total: £ (\d+\.\d{2})", text, re.IGNORECASE)
+
+    return {
+        "invoice_no": invoice_no.group(1) if invoice_no else None,
+        "date": date.group(1) if date else None,
+        "total": total.group(1) if total else None
+    }
+
+def extract_colorama_line_items(text):
     lines = text.splitlines()
     items = []
 
@@ -57,21 +96,124 @@ def extract_line_items(text):
 
     return items
 
-
-
-
-#---------------- INVOICE HEADER EXTRACTION -------
-def extract_invoice_fields(text):
-    """Extract invoice number, date and total using regex patterns"""
-    invoice_no = re.search(r"Invoice No : (\S+)", text, re.IGNORECASE)
-    date = re.search(r"Order Date : (\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", text, re.IGNORECASE)
-    total = re.search(r"Total: £ (\d+\.\d{2})", text, re.IGNORECASE)
+def extract_aah_fields(text):
+    invoice_no = re.search(r"Invoice\s*Ref[:\s]*([A-Z0-9]+)(?=\s|$)", text, re.IGNORECASE)
+    date = re.search(r"Invoice\s*Date[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", text)
+    total = re.search(r"Total\s*amt\s*due\s*\(GBP\)[:\s]*([\d,]+\.\d{2})", text, re.IGNORECASE)
 
     return {
         "invoice_no": invoice_no.group(1) if invoice_no else None,
         "date": date.group(1) if date else None,
         "total": total.group(1) if total else None
     }
+
+def extract_aah_line_items(text):
+    pattern = re.compile(
+        r"(?P<product_code>[A-Z]{3}\d{4,5}[A-Z]?)\s*"     # e.g. ADC0049A
+        r"(?P<pack_size>\d{1,3}[A-Z]?)\s+"                # e.g. 112, 28, 50N
+        r"(?P<description>[A-Za-z0-9%/\[\]\-\s]+?)\s+"    # e.g. ADCAL D3 CAPLET 750MG
+        r"(?P<qty>\d+)\s+"                                # quantity
+        r"(?P<unit_price>\d+\.\d{2})\s+"                  # unit price
+        r"(?P<net_price>\d+\.\d{2})\s+"                   # net price
+        r"(?P<vat>\d+%)\s+"                               # VAT
+        r"(?P<total>\d+\.\d{2})",                         # total
+        re.MULTILINE
+    )
+
+    items = [m.groupdict() for m in pattern.finditer(text)]
+    return items
+
+def extract_alliance_fields(text):
+    invoice_no = re.search(r"\bE\d[A-Z]\d{5,6}\b", text)
+    date = re.search(r"(\d{1,2}[A-Z]{3}\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", text)
+    total = re.search(r"INVOICE\s+TOTAL\s+([\d,]+\.\d{2})", text, re.IGNORECASE)
+
+    return {
+        "invoice_no": invoice_no.group(0) if invoice_no else None,
+        "date": date.group(1) if date else None,
+        "total": total.group(1) if total else None
+    }
+
+def extract_alliance_line_items(text):
+    """
+    Extract clean line items from Alliance invoices.
+    Returns a list of dictionaries with keys:
+    qty, description, unit_price, vat_code, net_amount, vat_amount, product_code
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    items = []
+    i = 0
+
+    while i < len(lines):
+        # Start of an item: line begins with quantity (digits) followed by description
+        match = re.match(r'^(\d+)\s+(.*)', lines[i])
+        if match:
+            qty = match.group(1)
+            description_lines = [match.group(2)]
+            i += 1
+
+            # Gather description lines until we hit numeric values for unit_price/net
+            while i < len(lines):
+                # Skip lines with irrelevant info
+                if re.search(r'FRIDGE|Parcel reference|#|VAT|TOTAL|PAGE', lines[i], re.IGNORECASE):
+                    i += 1
+                    continue
+
+                # Stop if line looks like numbers for price/net/total
+                if re.match(r'^\d+(\.\d+)?$', lines[i]):
+                    break
+
+                description_lines.append(lines[i])
+                i += 1
+
+            description = " ".join(description_lines)
+
+            # Now try to get unit price, vat code, net+vat line, product code
+            try:
+                unit_price = lines[i]
+                vat_code = lines[i+1]
+                net_vat_line = lines[i+2]
+                product_code_line = lines[i+3]
+
+                # Parse net and vat amounts (first two numbers in the line)
+                net_amount, vat_amount = re.findall(r'[\d]+\.\d{2}', net_vat_line)[:2]
+
+                item = {
+                    "qty": qty,
+                    "description": description,
+                    "unit_price": unit_price,
+                    "vat_code": vat_code,
+                    "net_amount": net_amount,
+                    "vat_amount": vat_amount,
+                    "product_code": product_code_line
+                }
+                items.append(item)
+                i += 4  # move past this block
+
+            except IndexError:
+                # End of file or unexpected format
+                break
+
+        else:
+            i += 1
+
+    return items
+
+
+def process_alliance_invoice(text):
+    """Combine header + line items for Alliance invoice"""
+    header = extract_alliance_fields(text)
+    items = extract_alliance_line_items(text)
+
+    # Attach header fields to each line item
+    for item in items:
+        item["invoice_no"] = header.get("invoice_no")
+        item["invoice_date"] = header.get("invoice_date")
+        item["invoice_total"] = header.get("invoice_total")
+
+    return items
+
+
 
 # --------- GUI APPLICATION ----------------
 class InvoiceApp:
@@ -87,9 +229,9 @@ class InvoiceApp:
         self.list_font = tkfont.Font(family="Consolas", size=10)
 
         # Load background image
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.bg_image_path = os.path.join(script_dir, "moebius2.png")
-        self.set_background(self.bg_image_path)
+        # script_dir = os.path.dirname(os.path.abspath(__file__))
+        # self.bg_image_path = os.path.join(script_dir, "moebius2.png")
+        # self.set_background(self.bg_image_path)
 
         # Frame layout
         top_frame = tk.Frame(root, bg="#ffffff", highlightthickness=0)
@@ -242,16 +384,14 @@ class InvoiceApp:
 
 
 
-        for i, file_path in enumerate(self.file_list):
+        for i, file_path in enumerate(self.file_list):  
             try:
                 text = extract_text_from_pdf(file_path)
                 supplier = detect_supplier(text)
-                header = extract_invoice_fields(text)
-                line_items = extract_line_items(text)
+                header = extract_invoice_fields(text, supplier)
+                line_items = extract_line_items(text, supplier)
 
-                if line_items:
-                    processed_invoices += 1
-
+                items = []
                 for item in line_items:
                     item.update({
                         "Supplier": supplier,
@@ -260,8 +400,12 @@ class InvoiceApp:
                         "Total": header.get("total"),
                         "Filename": os.path.basename(file_path)
                     })
-                    all_data.append(item)
-                    
+                    items.append(item)
+
+                if items:
+                    processed_invoices += 1
+                    all_data.extend(items)
+                            
             except Exception as e:
                 messagebox.showerror("error", f"failed to process {file_path}.\nError: {e}")
 
