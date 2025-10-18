@@ -4,3 +4,6 @@ This program takes as input PDF files - specifically pharmaceutical wholesaler i
 
 Current wholesaler invoice formats:
 - Colorama (B&S)
+- AAH
+- Trident
+- Alliance Healthcare
