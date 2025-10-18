@@ -8,9 +8,9 @@ from PIL import Image, ImageTk
 import tkinter.font as tkfont
 
 
-# ----- PDF TEXT EXTRACTION --------
+# PDF TEXT EXTRACTION
 def extract_text_from_pdf(pdf_path):
-    """Extract text from all pages of a given PDF file"""
+    """extracts the text from the whole pdf and returns as a string"""
     text = ""
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
@@ -20,9 +20,9 @@ def extract_text_from_pdf(pdf_path):
 
 
 
-#------------ SUPPLIER DETECTION -------------
+# DETECT SUPPLIER
 def detect_supplier(text):
-    """Return supplier name based on unique keywords in the PDF"""
+    """searches text for supplier name - returns supplier"""
     text_lower = text.lower()
     if "laxmico" in text_lower:
         return "Colorama"
@@ -35,8 +35,9 @@ def detect_supplier(text):
     else: 
         return "Unknown"
 
-#------------------ LINE ITEM EXTRACTION ------------
+# EXTRACTS LINE ITEMS
 def extract_line_items(text, supplier):
+    """directs to supplier-specific line item extraction function"""
     if supplier == "AAH":
         return extract_aah_line_items(text)
     elif supplier == "Colorama":
@@ -50,8 +51,9 @@ def extract_line_items(text, supplier):
 
 
 
-#---------------- INVOICE HEADER EXTRACTION -------
+# EXTRACT INVOICE HEADER
 def extract_invoice_fields(text, supplier):
+    """directs to supplier-specific invoice header extraction function"""
     if supplier == "AAH":
         return extract_aah_fields(text)
     elif supplier == "Colorama":
@@ -63,6 +65,7 @@ def extract_invoice_fields(text, supplier):
     else:
         return {"invoice_no": None, "date": None, "total": None}
 
+# COLORAMA EXTRACTION
 def extract_colorama_fields(text):
     """Extract invoice number, date and total using regex patterns"""
     invoice_no = re.search(r"Invoice No : (\S+)", text, re.IGNORECASE)
@@ -76,6 +79,7 @@ def extract_colorama_fields(text):
     }
 
 def extract_colorama_line_items(text):
+    """"Extract line items from colorama invoice"""
     lines = text.splitlines()
     items = []
 
@@ -96,6 +100,7 @@ def extract_colorama_line_items(text):
 
     return items
 
+# AAH EXTRACTION
 def extract_aah_fields(text):
     invoice_no = re.search(r"Invoice\s*Ref[:\s]*([A-Z0-9]+)(?=\s|$)", text, re.IGNORECASE)
     date = re.search(r"Invoice\s*Date[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", text)
@@ -109,19 +114,21 @@ def extract_aah_fields(text):
 
 def extract_aah_line_items(text):
     pattern = re.compile(
-        r"(?P<product_code>[A-Z]{3}\d{4,5}[A-Z]?)\s*"     # e.g. ADC0049A
-        r"(?P<pack_size>\d{1,3}[A-Z]?)\s+"                # e.g. 112, 28, 50N
-        r"(?P<description>[A-Za-z0-9%/\[\]\-\s]+?)\s+"    # e.g. ADCAL D3 CAPLET 750MG
-        r"(?P<qty>\d+)\s+"                                # quantity
-        r"(?P<unit_price>\d+\.\d{2})\s+"                  # unit price
-        r"(?P<net_price>\d+\.\d{2})\s+"                   # net price
-        r"(?P<vat>\d+%)\s+"                               # VAT
-        r"(?P<total>\d+\.\d{2})",                         # total
+        r"(?P<product_code>[A-Z]{3}\d{4,5}[A-Z]?)\s*"
+        r"(?P<pack_size>\d{1,3}[A-Z]?)\s+"               
+        r"(?P<description>[A-Za-z0-9%/\[\]\-\s]+?)\s+"    
+        r"(?P<qty>\d+)\s+"                                
+        r"(?P<unit_price>\d+\.\d{2})\s+"                  
+        r"(?P<net_price>\d+\.\d{2})\s+"                  
+        r"(?P<vat>\d+%)\s+"                               
+        r"(?P<total>\d+\.\d{2})",                         
         re.MULTILINE
     )
 
     items = [m.groupdict() for m in pattern.finditer(text)]
     return items
+
+# ALLIANCE EXTRACTION
 
 def extract_alliance_fields(text):
     invoice_no = re.search(r"\bE\d[A-Z]\d{5,6}\b", text)
@@ -136,86 +143,57 @@ def extract_alliance_fields(text):
 
 def extract_alliance_line_items(text):
     """
-    Extract clean line items from Alliance invoices.
-    Returns a list of dictionaries with keys:
-    qty, description, unit_price, vat_code, net_amount, vat_amount, product_code
+    Extracts line items from Alliance invoices with structure like:
+    1  1 PRODUCT NAME ... 7.11 Z 7.11 20.00 1.42
+       0362-475   CDSCH3
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     items = []
-    i = 0
 
+    # Regex for the main item line
+    pattern_main = re.compile(
+        r'^\s*(\d+)\s+\d+\s+([A-Z0-9%/\-\s()]+?)\s+1\s+([\d.]+)\s+([A-Z])\s+([\d.]+)\s+[\d.]+\s+([\d.]+)',
+        re.MULTILINE
+    )
+
+    # Regex for the product code on the next line
+    pattern_code = re.compile(r'^\s*(\d{4,5}-\d{3})')
+
+    i = 0
     while i < len(lines):
-        # Start of an item: line begins with quantity (digits) followed by description
-        match = re.match(r'^(\d+)\s+(.*)', lines[i])
+        match = pattern_main.match(lines[i])
         if match:
             qty = match.group(1)
-            description_lines = [match.group(2)]
-            i += 1
+            description = match.group(2).strip()
+            unit_price = match.group(3)
+            vat_code = match.group(4)
+            net_amount = match.group(5)
+            vat_amount = match.group(6)
 
-            # Gather description lines until we hit numeric values for unit_price/net
-            while i < len(lines):
-                # Skip lines with irrelevant info
-                if re.search(r'FRIDGE|Parcel reference|#|VAT|TOTAL|PAGE', lines[i], re.IGNORECASE):
-                    i += 1
-                    continue
+            # Look ahead for product code
+            product_code = None
+            if i + 1 < len(lines):
+                code_match = pattern_code.match(lines[i + 1])
+                if code_match:
+                    product_code = code_match.group(1)
+                    i += 1  # skip the product code line
 
-                # Stop if line looks like numbers for price/net/total
-                if re.match(r'^\d+(\.\d+)?$', lines[i]):
-                    break
+            items.append({
+                "qty": qty,
+                "description": description,
+                "unit_price": unit_price,
+                "vat_code": vat_code,
+                "net_amount": net_amount,
+                "vat_amount": vat_amount,
+                "product_code": product_code
+            })
 
-                description_lines.append(lines[i])
-                i += 1
-
-            description = " ".join(description_lines)
-
-            # Now try to get unit price, vat code, net+vat line, product code
-            try:
-                unit_price = lines[i]
-                vat_code = lines[i+1]
-                net_vat_line = lines[i+2]
-                product_code_line = lines[i+3]
-
-                # Parse net and vat amounts (first two numbers in the line)
-                net_amount, vat_amount = re.findall(r'[\d]+\.\d{2}', net_vat_line)[:2]
-
-                item = {
-                    "qty": qty,
-                    "description": description,
-                    "unit_price": unit_price,
-                    "vat_code": vat_code,
-                    "net_amount": net_amount,
-                    "vat_amount": vat_amount,
-                    "product_code": product_code_line
-                }
-                items.append(item)
-                i += 4  # move past this block
-
-            except IndexError:
-                # End of file or unexpected format
-                break
-
-        else:
-            i += 1
+        i += 1
 
     return items
 
 
-def process_alliance_invoice(text):
-    """Combine header + line items for Alliance invoice"""
-    header = extract_alliance_fields(text)
-    items = extract_alliance_line_items(text)
-
-    # Attach header fields to each line item
-    for item in items:
-        item["invoice_no"] = header.get("invoice_no")
-        item["invoice_date"] = header.get("invoice_date")
-        item["invoice_total"] = header.get("invoice_total")
-
-    return items
-
-
-
-# --------- GUI APPLICATION ----------------
+# GUI APPLICATION 
 class InvoiceApp:
     def __init__(self, root):
         self.root = root
@@ -228,10 +206,6 @@ class InvoiceApp:
         self.button_font = tkfont.Font(family="Segoe UI", size = 11)
         self.list_font = tkfont.Font(family="Consolas", size=10)
 
-        # Load background image
-        # script_dir = os.path.dirname(os.path.abspath(__file__))
-        # self.bg_image_path = os.path.join(script_dir, "moebius2.png")
-        # self.set_background(self.bg_image_path)
 
         # Frame layout
         top_frame = tk.Frame(root, bg="#ffffff", highlightthickness=0)
@@ -243,6 +217,9 @@ class InvoiceApp:
         bottom_frame = tk.Frame(root, bg="#ffffff", bd=0)
         bottom_frame.place(relx=0.5, rely=0.85, anchor="center")
 
+        btn_frame = tk.Frame(root, bg="#f3f4f6")
+        btn_frame.pack(pady=10)
+
         # Title
         self.title_label = tk.Label(
             root,
@@ -252,9 +229,6 @@ class InvoiceApp:
             fg="#2b2b2b",
         )
         self.title_label.pack(pady=20)
-
-        btn_frame = tk.Frame(root, bg="#f3f4f6")
-        btn_frame.pack(pady=10)
 
 
         # Select files button
@@ -381,7 +355,6 @@ class InvoiceApp:
         self.progress["value"] = 0
         self.progress["maximum"] = total_files
         self.root.update_idletasks()
-
 
 
         for i, file_path in enumerate(self.file_list):  
